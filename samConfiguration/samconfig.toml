@@ -1,0 +1,35 @@
+# More information about the configuration file can be found here:
+# https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-config.html
+version = 0.1
+
+[default]
+[default.global.parameters]
+stack_name = "house-backend-sam"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.validate.parameters]
+lint = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+s3_prefix = "house-backend-sam"
+region = "us-east-1"
+image_repositories = []
+parameter_overrides = "AuthorizerFunctionArn=\"arn:aws:lambda:us-east-1:164190131261:function:house-control-lambda-authorizer\" StageName=\"dev\" DataTableName=\"house_devices_data_table\" UuidNodeLambdaLayer=\"s3://my-layers-house-backend-sam/layer_uuid.zip\""
+
+[default.package.parameters]
+resolve_s3 = true
+
+[default.sync.parameters]
+watch = true
+
+[default.local_start_api.parameters]
+warm_containers = "EAGER"
+
+[default.local_start_lambda.parameters]
+warm_containers = "EAGER"

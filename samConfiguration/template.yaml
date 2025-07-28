@@ -1,0 +1,226 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  house-backend-sam
+
+  Sample SAM Template for house-backend-sam
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+Parameters:
+  AuthorizerFunctionArn:
+    Type: String
+  StageName:
+    Type: String
+    Default: Prod
+  DataTableName:
+    Type: String
+    Default: house_devices_data_table
+
+Resources:
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref StageName
+      Auth:
+        EnableIamAuthorizer: true
+        Authorizers:
+          HttpAuthorizer:
+            AuthorizerPayloadFormatVersion: 2.0
+            FunctionArn: !Ref AuthorizerFunctionArn
+            FunctionInvokeRole: !GetAtt FunctionWithAuthInvokeRole.Arn 
+            EnableSimpleResponses: false
+            Identity:
+              Headers:
+                - Authorization
+        DefaultAuthorizer: HttpAuthorizer
+      AccessLogSettings:
+        DestinationArn: !GetAtt AccessLogsUpdated.Arn
+        Format: $context.extendedRequestId
+
+  AccessLogsUpdated:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/HttpApiLogGroup
+      RetentionInDays: 30
+
+  FunctionWithAuthInvokeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+            Action: sts:AssumeRole
+
+  FunctionWithAuthInvokePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: FunctionWithAuthInvokePolicy
+      Roles:
+        - !Ref FunctionWithAuthInvokeRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: '*'
+
+  NoAuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      # Handler: src/hello_world/app.lambda_handler
+      Handler: src/hello_world/app.lambda_handler
+      Runtime: python3.11
+      Architectures:
+        - x86_64
+      MemorySize: 128
+      Events:
+        NoAuthHttp:
+          Type: HttpApi
+          Properties:
+            Path: /hello
+            Method: get
+            ApiId: !Ref HttpApi
+            Auth:
+              Authorizer: NONE
+
+  AuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/auth_world/app.lambda_handler
+      Runtime: python3.11
+      Architectures:
+        - x86_64
+      MemorySize: 128
+      Events:
+        AuthHttp:
+          Type: HttpApi
+          Properties:
+            Path: /auth-hello
+            Method: get
+            ApiId: !Ref HttpApi
+
+  GetAllRecordsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/get_all_records/getAllItems.getAllItemsHandler
+      Runtime: nodejs20.x
+      Architectures:
+        - x86_64
+      MemorySize: 128
+      Policies:
+          # Give Create/Read/Update/Delete Permissions to the HouseControlTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref HouseDevicesDataTable
+      Environment:
+        Variables:
+          # Make table name accessible as environment variable from function code during execution
+          SAMPLE_TABLE: !Ref HouseDevicesDataTable
+      Events:
+        AuthHttp:
+          Type: HttpApi
+          Properties:
+            Path: /all-records
+            Method: GET
+            ApiId: !Ref HttpApi
+
+  GetRecordsByIdFunction:
+      Type: AWS::Serverless::Function
+      Properties:
+        Handler: src/get_by_id/getById.lambdaHandler
+        Runtime: nodejs20.x
+        Architectures:
+          - x86_64
+        MemorySize: 128
+        Timeout: 100
+        Description: A simple example includes a HTTP get method to get one item by id from a DynamoDB table.
+        Policies:
+          # Give Create/Read/Update/Delete Permissions to the HouseControlTable
+          - DynamoDBCrudPolicy:
+              TableName: !Ref HouseDevicesDataTable
+        Environment:
+          Variables:
+            # Make table name accessible as environment variable from function code during execution
+            SAMPLE_TABLE: !Ref HouseDevicesDataTable
+        Events:
+          AuthHttp:
+            Type: HttpApi
+            Properties:
+              Path: /record/{id}
+              Method: GET
+              ApiId: !Ref HttpApi
+
+  UpdateTableWithStationDataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/update_table_from_station/updateTable.putItemHandler
+      Runtime: nodejs20.x
+      Architectures:
+        - x86_64
+      MemorySize: 128
+      Layers:
+        - !Ref UuidNodeLayer
+      Timeout: 100
+      Description: A simple example includes a HTTP post method to add one item to a DynamoDB table.
+      Policies:
+        # Give Create/Read/Update/Delete Permissions to the HouseControlTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref HouseDevicesDataTable
+      Environment:
+        Variables:
+          # Make table name accessible as environment variable from function code during execution
+          SAMPLE_TABLE: !Ref HouseDevicesDataTable
+      Events:
+        Api:
+          Type: IoTRule
+          Properties:
+            Sql: SELECT * FROM 'topic' WHERE mode = 'STATION'
+
+  UuidNodeLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      ContentUri: src/layers/uuidLayer
+      # LayerName: LayerUUID
+      Description: 'Includes the uuid library neccessary to updathe the table from IOT rule.'
+      CompatibleRuntimes:
+        - nodejs20.x
+
+  HouseDevicesDataTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: !Ref DataTableName
+      PrimaryKey:
+        Name: id
+        Type: String
+      ProvisionedThroughput:
+        ReadCapacityUnits: 2
+        WriteCapacityUnits: 2
+
+Outputs:
+  HttpApiUrl:
+    Description: URL of your API endpoint
+    Value:
+      Fn::Sub: 'https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${StageName}/'
+  HttpApiId:
+    Description: Api id of HttpApi
+    Value:
+      Ref: HttpApi
+  # HelloUrl:
+  #   Description: URL of Hello function
+  #   Value: !GetAtt NoAuthFunction.FunctionUrl
+  # GetAllRecordsFunctionUrl:
+  #   Description: URL of Get All Records Function
+  #   Value: !GetAtt GetAllRecordsFunction.FunctionUrl
